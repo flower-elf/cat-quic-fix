@@ -27,6 +27,7 @@ import (
 
 	"github.com/metacubex/http"
 	"github.com/metacubex/quic-go"
+	"github.com/metacubex/quic-go/qlog"
 	"github.com/metacubex/tls"
 	"golang.org/x/sync/semaphore"
 )
@@ -46,6 +47,7 @@ type Masque struct {
 	runLock   *semaphore.Weighted
 	running   atomic.Bool
 	runDevice atomic.Bool
+	redialing atomic.Bool
 
 	option MasqueOption
 }
@@ -207,10 +209,23 @@ func NewMasque(option MasqueOption) (*Masque, error) {
 		}
 	}
 
+	// 参照官方客户端所用的 tokio-quiche QuicSettings
+	// 关闭按发包数触发的连接 ID 轮换：避免 Cloudflare 边缘的 PROTOCOL_VIOLATION
+	// 关闭都紧跟在客户端退休旧连接 ID 之后，官方客户端的 quiche 没有这种轮换。
 	outbound.quicConfig = &quic.Config{
-		EnableDatagrams:   true,
-		InitialPacketSize: 1242,
-		KeepAlivePeriod:   30 * time.Second,
+		EnableDatagrams:                true,
+		InitialPacketSize:              1350,
+		MaxUDPPayloadSize:              1350,
+		ActiveConnectionIDLimit:        5,
+		DisableConnectionIDRotation:    true,
+		MaxIdleTimeout:                 56 * time.Second,
+		KeepAlivePeriod:                30 * time.Second,
+		InitialStreamReceiveWindow:     1_000_000,
+		MaxStreamReceiveWindow:         16 << 20,
+		InitialConnectionReceiveWindow: 10_000_000,
+		MaxConnectionReceiveWindow:     24 << 20,
+		MaxDatagramFrameSize:           65536,
+		Tracer:                         qlog.DefaultConnectionTracer,
 	}
 
 	outbound.option = option
@@ -372,6 +387,7 @@ func (w *Masque) startLocked(ctx context.Context) error {
 		if pc != nil {
 			_ = pc.Close()
 		}
+		w.redialAfterFailure()
 	})
 
 	go func() {
@@ -424,6 +440,32 @@ func (w *Masque) startLocked(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+// redialAfterFailure 在隧道被远端关闭后立即重建
+func (w *Masque) redialAfterFailure() {
+	if w.runCtx.Err() != nil || !w.redialing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer w.redialing.Store(false)
+		backoff := 250 * time.Millisecond
+		var lastErr error
+		for attempt := 0; attempt < 8 && w.runCtx.Err() == nil && !w.running.Load(); attempt++ {
+			time.Sleep(backoff)
+			lastErr = w.run(w.runCtx)
+			if lastErr == nil {
+				log.Infoln("[Masque](%s) tunnel reconnected after close", w.name)
+				return
+			}
+			if backoff < 2*time.Second {
+				backoff *= 2
+			}
+		}
+		if lastErr != nil && w.runCtx.Err() == nil {
+			log.Errorln("[Masque](%s) redial failed, next dial rebuilds the tunnel: %v", w.name, lastErr)
+		}
+	}()
 }
 
 // Close implements C.ProxyAdapter

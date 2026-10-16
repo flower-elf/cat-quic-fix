@@ -449,6 +449,9 @@ jobs:
     permissions: write-all
     needs: [build]
     runs-on: ubuntu-latest
+    env:
+      # secrets 不能用于 if 条件，先转成 env 再判断
+      DOCKER_CREDS: ${{ secrets.DOCKER_HUB_USER != '' && secrets.DOCKER_HUB_TOKEN != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -501,6 +504,7 @@ jobs:
           ls bin/
       
       - name: login to docker REGISTRY
+        if: ${{ env.DOCKER_CREDS == 'true' }}
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -510,7 +514,7 @@ jobs:
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
       - name: Build and push Docker image
-        if: ${{ github.event_name != 'workflow_dispatch' }}
+        if: ${{ env.DOCKER_CREDS == 'true' && github.event_name != 'workflow_dispatch' }}
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -525,7 +529,7 @@ jobs:
           labels: ${{ steps.meta_alpha.outputs.labels }}
       
       - name: Build and push Docker image
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version != '' }}
+        if: ${{ env.DOCKER_CREDS == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.version != '' }}
         uses: docker/build-push-action@v7
         with:
           context: .
