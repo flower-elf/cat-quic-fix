@@ -215,8 +215,7 @@ func NewMasque(option MasqueOption) (*Masque, error) {
 	outbound.quicConfig = &quic.Config{
 		EnableDatagrams:                true,
 		InitialPacketSize:              1350,
-		MaxUDPPayloadSize:              1350,
-		ActiveConnectionIDLimit:        5,
+		DisablePathMTUDiscovery:        true,
 		DisableConnectionIDRotation:    true,
 		MaxIdleTimeout:                 56 * time.Second,
 		KeepAlivePeriod:                30 * time.Second,

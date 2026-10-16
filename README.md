@@ -1,3 +1,6 @@
+> [!WARNING]
+> This repository is a personal experimental fork. It is intended to experimentally address MASQUE protocol issues. For normal releases, use the upstream repository: [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo).
+
 <h1 align="center">
   <img src="Meta.png" alt="Meta Kennel" width="200">
   <br>Meta Kernel<br>
